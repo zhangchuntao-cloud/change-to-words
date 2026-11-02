@@ -4,12 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "change-to-words"
-version = "0.3.1"
+version = "0.7.0"
 description = "本地离线音频/视频转文字 CLI 与极简 Web 界面（基于 faster-whisper）"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "faster-whisper>=1.0,<1.2",
+    "requests>=2.28,<3",
+    "av>=11,<19",
     "fastapi>=0.110,<1",
     "uvicorn>=0.29,<1",
     "python-multipart>=0.0.9,<1",

@@ -10,8 +10,24 @@ if [ ! -d "$DEPS/faster_whisper" ]; then
   exit 1
 fi
 
-# 默认使用 PATH 中的 python3；可用 CTW_PYTHON 指定其他解释器。
-PYTHON_BIN="${CTW_PYTHON:-python3}"
+# 优先使用 CTW_PYTHON；否则依次尝试 python3、python、py。
+if [ -n "${CTW_PYTHON:-}" ]; then
+  PYTHON_BIN="$CTW_PYTHON"
+else
+  PYTHON_BIN=""
+  for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c "import sys" >/dev/null 2>&1; then
+      PYTHON_BIN="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+  echo "错误: 找不到可用的 Python，请安装 Python 3.9+ 或设置 CTW_PYTHON" >&2
+  exit 1
+fi
 
 export PYTHONPATH="$ROOT/src:$DEPS${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PYTHON_BIN" -m change_to_words "$@"

@@ -35,7 +35,7 @@ MEDIA_EXTENSIONS = frozenset(
     }
 )
 
-OUTPUT_EXTENSIONS = frozenset({".txt", ".srt", ".vtt"})
+OUTPUT_EXTENSIONS = frozenset({".txt", ".srt", ".vtt", ".docx", ".md"})
 
 
 class JobError(Exception):

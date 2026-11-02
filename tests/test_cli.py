@@ -2,6 +2,7 @@ import contextlib
 import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from change_to_words.cli import run
@@ -127,6 +128,77 @@ class CliTests(unittest.TestCase):
                 "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHello world.\n",
             )
 
+    def test_docx_output_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            out = Path(tmp) / "result.docx"
+            code, _ = self.run_cli(
+                ["--format", "docx", "-o", str(out), str(audio)],
+                Factory(FakeTranscriber()),
+            )
+            self.assertEqual(code, 0)
+            data = out.read_bytes()
+            self.assertTrue(data.startswith(b"PK"))
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                document = archive.read("word/document.xml").decode("utf-8")
+            self.assertIn("Hello world.", document)
+
+    def test_docx_default_output_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, _ = self.run_cli(
+                ["--format", "docx", str(audio)], Factory(FakeTranscriber())
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(tmp) / "a.docx").exists())
+
+    def test_docx_output_extension_mismatch_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            out = Path(tmp) / "result.txt"
+            code, stderr = self.run_cli(
+                ["--format", "docx", "-o", str(out), str(audio)],
+                Factory(FakeTranscriber()),
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("扩展名", stderr)
+
+    def test_skips_existing_docx_without_loading_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            (Path(tmp) / "a.docx").write_bytes(b"old")
+            factory = Factory(FakeTranscriber())
+            code, _ = self.run_cli(
+                ["--format", "docx", str(audio)], factory
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(factory.calls, [])
+            self.assertEqual((Path(tmp) / "a.docx").read_bytes(), b"old")
+
+    def test_markdown_output_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            out = Path(tmp) / "result.md"
+            fake = FakeTranscriber({audio: ["Hello world.", "Second line."]})
+            code, _ = self.run_cli(
+                ["--format", "md", "-o", str(out), str(audio)],
+                Factory(fake),
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                out.read_text(encoding="utf-8"),
+                "Hello world.\n\nSecond line.\n",
+            )
+
+    def test_markdown_default_output_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, _ = self.run_cli(
+                ["--format", "md", str(audio)], Factory(FakeTranscriber())
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(tmp) / "a.md").exists())
+
     def test_output_extension_mismatch_returns_2(self):
         with tempfile.TemporaryDirectory() as tmp:
             audio = make_audio(tmp)
@@ -234,6 +306,96 @@ class CliTests(unittest.TestCase):
             self.assertEqual(factory.calls[0]["language"], "zh")
             self.assertFalse(factory.calls[0]["vad_filter"])
             self.assertTrue(factory.calls[0]["offline"])
+
+    def test_batch_size_forwarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            factory = Factory(FakeTranscriber())
+            code, _ = self.run_cli(
+                ["--batch-size", "8", str(audio)], factory
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(factory.calls[0]["batch_size"], 8)
+
+    def test_invalid_batch_size_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            for value in ("1", "20", "-1"):
+                with self.subTest(value=value):
+                    code, stderr = self.run_cli(
+                        ["--batch-size", value, str(audio)],
+                        Factory(FakeTranscriber()),
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertIn("batch-size", stderr)
+
+    def test_batch_size_requires_vad_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, stderr = self.run_cli(
+                ["--batch-size", "8", "--no-vad", str(audio)],
+                Factory(FakeTranscriber()),
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("静音过滤", stderr)
+
+    def test_beam_size_and_cpu_threads_forwarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            factory = Factory(FakeTranscriber())
+            code, _ = self.run_cli(
+                ["--beam-size", "1", "--cpu-threads", "4", str(audio)],
+                factory,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(factory.calls[0]["beam_size"], 1)
+            self.assertEqual(factory.calls[0]["cpu_threads"], 4)
+
+    def test_invalid_beam_size_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, stderr = self.run_cli(
+                ["--beam-size", "0", str(audio)], Factory(FakeTranscriber())
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("beam-size", stderr)
+
+    def test_negative_cpu_threads_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, stderr = self.run_cli(
+                ["--cpu-threads", "-1", str(audio)],
+                Factory(FakeTranscriber()),
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("cpu-threads", stderr)
+
+    def test_anti_repeat_options_forwarded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            factory = Factory(FakeTranscriber())
+            code, _ = self.run_cli(
+                [
+                    "--no-condition-on-previous-text",
+                    "--no-repeat-ngram-size",
+                    "3",
+                    str(audio),
+                ],
+                factory,
+            )
+            self.assertEqual(code, 0)
+            self.assertFalse(factory.calls[0]["condition_on_previous_text"])
+            self.assertEqual(factory.calls[0]["no_repeat_ngram_size"], 3)
+
+    def test_negative_no_repeat_ngram_size_returns_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = make_audio(tmp)
+            code, stderr = self.run_cli(
+                ["--no-repeat-ngram-size", "-1", str(audio)],
+                Factory(FakeTranscriber()),
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("no-repeat-ngram-size", stderr)
 
     def test_initial_prompt_forwarded(self):
         with tempfile.TemporaryDirectory() as tmp:

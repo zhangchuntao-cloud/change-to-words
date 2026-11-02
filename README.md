@@ -2,7 +2,7 @@
 
 本地离线的音频 / 视频转文字工具，基于 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)。
 
-拖入文件即自动转写，输出 TXT、SRT 或 VTT。音频只在本机处理，不需要 API Key。
+拖入文件即自动转写，输出 TXT、Markdown、SRT、VTT 或 DOCX。音频只在本机处理，不需要 API Key。
 
 ## 最快用法
 
@@ -21,10 +21,10 @@ cd change_to_words
 ## 功能
 
 - Web：拖拽 / 点击上传 / 麦克风录音，自动开始转写
-- Web：单行进度、结果文本、复制、TXT / SRT / VTT 下载
+- Web：单行进度、结果文本、复制、TXT / MD / SRT / VTT / DOCX 下载
 - Web：默认只监听本机，音频不会上传到第三方
 - CLI：单文件、批量文件、目录扫描、递归扫描
-- CLI：TXT / SRT / VTT 输出，支持术语提示和静音过滤
+- CLI：TXT / MD / SRT / VTT / DOCX 输出，支持术语提示和静音过滤
 - 自动识别语言，也可以指定 `zh`、`en`、`ja` 等
 - 模型只需下载一次，之后可完全离线使用
 
@@ -57,12 +57,23 @@ cd change_to_words
 ./ctw serve
 ```
 
-`.deps/` 已被 `.gitignore` 忽略。默认使用 PATH 中的 `python3`，需要换解释器时：
+`.deps/` 已被 `.gitignore` 忽略。脚本会依次尝试 `python3`、`python`、`py`，需要换解释器时：
 
 ```bash
 CTW_PYTHON=/path/to/python3 ./setup_local.sh
 CTW_PYTHON=/path/to/python3 ./ctw 录音.m4a
 ```
+
+### 方式三：Windows 原生（PowerShell / cmd）
+
+不依赖 Git Bash：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_local.ps1
+.\ctw.cmd serve
+```
+
+`ctw.cmd` 会优先使用 `py`，其次 `python`，也可以用 `set CTW_PYTHON=...` 指定。
 
 ## Web 界面
 
@@ -76,14 +87,19 @@ CTW_PYTHON=/path/to/python3 ./ctw 录音.m4a
 
 1. 拖入文件、点击选择，或点“直接录音”
 2. 自动开始转写，显示加载模型 / 转写进度
-3. 完成后复制文本，或下载 TXT / SRT / VTT
+3. 完成后复制文本，或下载 TXT / MD / SRT / VTT / DOCX
 
 高级设置默认收起，里面可以改：
 
 - 模型：`tiny` / `base` / `small` / `medium` / `large-v3`
 - 语言：自动识别 / 中文 / English / 日本語 / 한국어 / 粤语
+- 批量推理：0（关闭）/ 4 / 8 / 16，长音频可明显提速，需要开启静音过滤
+- 解码精度：快速（beam 1）/ 平衡（beam 5）
+- 长音频抗重复：关闭跨段上下文并禁止重复 3-gram，适合会议、访谈等长音频
 - 术语提示：人名、专有名词、行业词汇
 - 静音过滤
+
+转写过程中可以点“取消任务”，任务会在当前分段处理完后停止。
 
 启动参数：
 
@@ -91,8 +107,12 @@ CTW_PYTHON=/path/to/python3 ./ctw 录音.m4a
 ./ctw serve --port 9000                 # 换端口
 ./ctw serve -m medium                   # 默认模型
 ./ctw serve --offline                   # 只用已缓存模型
+./ctw serve --hf-endpoint https://hf-mirror.com   # 国内镜像下载模型
 ./ctw serve --download-root ~/models    # 模型缓存目录
 ./ctw serve --max-upload-mb 4096        # 上传大小上限
+./ctw serve --max-jobs 200              # 内存中最多保留 200 个任务
+./ctw serve --cpu-threads 8             # CPU 线程数，0 为自动
+./ctw serve --beam-size 5               # 默认解码束宽，1 更快、5 更准
 ./ctw serve --no-browser                # 不自动打开浏览器
 ```
 
@@ -101,8 +121,11 @@ CTW_PYTHON=/path/to/python3 ./ctw 录音.m4a
 国内网络下载模型：
 
 ```bash
-HF_ENDPOINT=https://hf-mirror.com ./ctw serve
+./ctw --hf-endpoint https://hf-mirror.com -m small audio.mp3
+./ctw serve --hf-endpoint https://hf-mirror.com
 ```
+
+也可以设置环境变量 `HF_ENDPOINT=https://hf-mirror.com`。使用镜像时会自动禁用 Xet 传输，避免部分镜像卡住。
 
 ### Web API
 
@@ -113,12 +136,13 @@ HF_ENDPOINT=https://hf-mirror.com ./ctw serve
 | `GET` | `/api/health` | 健康检查、版本、默认模型 |
 | `POST` | `/api/jobs` | 上传文件并创建任务（multipart） |
 | `GET` | `/api/jobs/{id}` | 任务详情和分段结果 |
-| `GET` | `/api/jobs/{id}/download?fmt=txt\|srt\|vtt` | 下载结果 |
+| `POST` | `/api/jobs/{id}/cancel` | 取消排队中或正在运行的任务 |
+| `GET` | `/api/jobs/{id}/download?fmt=txt\|md\|srt\|vtt\|docx` | 下载结果 |
 | `GET` | `/api/jobs/{id}/media` | 读取原始音频 |
 | `GET` | `/api/jobs` | 最近任务列表 |
-| `DELETE` | `/api/jobs/{id}` | 删除已完成任务 |
+| `DELETE` | `/api/jobs/{id}` | 删除已完成或已取消的任务 |
 
-任务在内存中执行，服务重启后任务列表会清空。
+任务在内存中执行，服务重启后任务列表会清空。默认最多保留 100 个任务，超出后自动清理最旧的已完成任务及其上传文件，可用 `--max-jobs` 调整。
 
 ## 命令行
 
@@ -129,9 +153,14 @@ HF_ENDPOINT=https://hf-mirror.com ./ctw serve
 # 中文 + 更大的模型
 ./ctw -l zh -m medium 会议录音.m4a
 
-# 生成 SRT / VTT
+# 生成 Markdown / SRT / VTT / Word 文档
+./ctw --format md 会议记录.m4a
 ./ctw --format srt 视频.mp4
 ./ctw --format vtt -o output/ 视频.mp4
+./ctw --format docx 会议录音.m4a
+
+# 长音频提速：批量推理（必须开启静音过滤）
+./ctw --batch-size 8 -l zh -m small 长会议.m4a
 
 # 术语提示
 ./ctw -l zh --initial-prompt "百度智能云，CTranslate2，昆仑芯片" 录音.m4a
@@ -154,11 +183,16 @@ HF_ENDPOINT=https://hf-mirror.com ./ctw serve
 | `-m, --model NAME` | 模型名或 Hugging Face 仓库 ID，默认 `small` |
 | `--model-path DIR` | 本地 CTranslate2 模型目录（与 `--model` 二选一） |
 | `-l, --language CODE` | 语言代码，如 `zh`、`en`、`ja`；默认 `auto` |
-| `--format FORMAT` | `txt`（默认）、`srt`、`vtt` |
+| `--format FORMAT` | `txt`（默认）、`md`、`srt`、`vtt`、`docx` |
 | `-o, --output PATH` | 单文件时可为具体输出文件；否则为输出目录 |
 | `-r, --recursive` | 递归扫描目录 |
 | `--overwrite` | 覆盖已存在的输出 |
 | `--no-vad` | 关闭静音过滤（默认开启） |
+| `--batch-size N` | 批量推理大小，`0` 关闭；建议 `4`-`16`，必须开启静音过滤 |
+| `--beam-size N` | 解码束宽，默认 `5`；`1` 最快，数值越大越准也越慢 |
+| `--cpu-threads N` | CPU 线程数，`0` 自动（默认） |
+| `--condition-on-previous-text / --no-condition-on-previous-text` | 是否用前一段作为上下文，默认开启；长音频出现重复时关闭 |
+| `--no-repeat-ngram-size N` | 禁止重复的 n-gram 大小，`0` 关闭；出现重复时可设 `3` |
 | `--initial-prompt TEXT` | 术语提示 |
 | `--download-root DIR` | 模型缓存目录 |
 | `--hf-endpoint URL` | Hugging Face 镜像 |
@@ -169,7 +203,7 @@ HF_ENDPOINT=https://hf-mirror.com ./ctw serve
 默认行为：
 
 - 不指定 `-o` 时，输出写在源文件旁边，例如 `audio.mp3` → `audio.txt`
-- `--format srt` / `vtt` 时，默认输出 `audio.srt` / `audio.vtt`
+- `--format md` / `srt` / `vtt` / `docx` 时，默认输出 `audio.md` / `audio.srt` / `audio.vtt` / `audio.docx`
 - `-o` 指向具体文件时，扩展名必须与 `--format` 一致
 - 已存在的输出默认跳过
 - 批量处理时单个文件失败不会中断其他文件
@@ -182,6 +216,16 @@ HF_ENDPOINT=https://hf-mirror.com ./ctw serve
 
 ```text
 大家好，今天的会议主要讨论三件事。
+第一是项目进度，第二是资源安排。
+```
+
+### Markdown
+
+每个 Whisper 分段一个段落，段间空一行，方便直接粘贴到笔记或文档系统：
+
+```markdown
+大家好，今天的会议主要讨论三件事。
+
 第一是项目进度，第二是资源安排。
 ```
 
@@ -202,6 +246,16 @@ WEBVTT
 大家好，今天的会议主要讨论三件事。
 ```
 
+### DOCX
+
+生成可编辑的 Word 文档（`.docx`），每个 Whisper 分段一个段落，内容和 TXT 一致：
+
+```bash
+./ctw --format docx 会议录音.m4a
+```
+
+不需要安装 Word 或额外依赖，文件由 Python 标准库直接生成。Web 界面同样提供 DOCX 下载按钮。
+
 ## 模型选择
 
 | 模型 | 大致大小 | 特点 |
@@ -217,6 +271,41 @@ WEBVTT
 ```bash
 ./ctw -l zh -m medium 录音.m4a
 ```
+
+## 速度优化
+
+长音频优先考虑“换小模型 + 批量推理”，这通常是最大的加速来源：
+
+```bash
+# 速度优先：base + 批量 8
+./ctw --batch-size 8 -m base -l zh 长会议.m4a
+
+# 长音频推荐：base + 批量 8 + 抗重复
+./ctw --batch-size 8 --no-condition-on-previous-text \
+  --no-repeat-ngram-size 3 -m base -l zh 长会议.m4a
+
+# 最快：tiny + 批量 8 + beam 1
+./ctw --batch-size 8 --beam-size 1 -m tiny -l zh 长会议.m4a
+
+# 准确优先：small/medium + 批量 8 + beam 5
+./ctw --batch-size 8 --beam-size 5 -m small -l zh 长会议.m4a
+```
+
+其他建议：
+
+- 保持静音过滤开启，VAD 会跳过静音，长会议收益明显
+- `--cpu-threads` 可以先试物理核心数（如 4），再试逻辑核心数（如 8）
+- 笔记本插电并关闭省电模式，避免 CPU 降频
+- 首次下载模型走 `--hf-endpoint https://hf-mirror.com`
+- Web 界面同样可以在“高级设置”里选批量推理和解码精度
+
+本机实测（i5-11320H，4 核 8 线程，81.8 分钟中文音频）：
+
+- `small`、批量关闭：约 1.35 倍实时，预计约 65 分钟
+- `base + 批量 8`：约 12 倍实时
+- `base + 批量 8 + 抗重复`：约 17 倍实时，实际 4.9 分钟完成
+
+如果长音频出现“同一句话反复重复”的幻觉，优先加抗重复参数；仅这一项就能把重复段落从 57 行降到 1 行左右。
 
 ## 国内网络与离线使用
 
@@ -257,6 +346,8 @@ src/change_to_words/
 ├── web/index.html  # 极简单页界面
 ├── transcriber.py  # faster-whisper 加载与转写
 ├── subtitle.py     # SRT / VTT 生成
+├── markdown.py      # Markdown 生成
+├── word.py         # DOCX 生成（标准库 zipfile + XML）
 ├── jobs.py         # 文件扫描、输出路径与冲突检查
 ├── text.py         # TXT 拼接
 └── writer.py       # 原子写入

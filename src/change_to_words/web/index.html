@@ -121,6 +121,7 @@
     }
     .error { display: none; color: var(--err); font-size: 13px; margin-top: 10px; }
     .error.visible { display: block; }
+    #cancelBtn { margin-top: 8px; padding-left: 0; }
     .result { display: none; margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
     .result.visible { display: block; }
     .result-head {
@@ -195,11 +196,28 @@
               <option value="yue">粤语</option>
             </select>
           </label>
+          <label>批量推理
+            <select id="batchSize">
+              <option value="0" selected>关闭（默认）</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="16">16</option>
+            </select>
+          </label>
+          <label>解码精度
+            <select id="beamSize">
+              <option value="1">快速（beam 1）</option>
+              <option value="5" selected>平衡（beam 5）</option>
+            </select>
+          </label>
           <label class="wide">术语提示（可选）
             <input id="initialPrompt" type="text" placeholder="人名、专有名词、行业词汇">
           </label>
           <label class="check">
             <input id="vad" type="checkbox" checked> 静音过滤
+          </label>
+          <label class="check">
+            <input id="antiRepeat" type="checkbox"> 长音频抗重复
           </label>
         </div>
       </details>
@@ -210,6 +228,7 @@
           <span id="statusMeta"></span>
         </div>
         <div id="barWrap" class="bar"><div id="bar"></div></div>
+        <button id="cancelBtn" class="text-btn" type="button" hidden>取消任务</button>
         <div id="errorText" class="error"></div>
       </div>
 
@@ -221,6 +240,8 @@
             <a id="dlTxt" href="#">TXT</a>
             <a id="dlSrt" href="#">SRT</a>
             <a id="dlVtt" href="#">VTT</a>
+            <a id="dlMd" href="#">MD</a>
+            <a id="dlDocx" href="#">DOCX</a>
           </div>
         </div>
         <div id="transcript" class="transcript"></div>
@@ -299,6 +320,9 @@
       setError("");
       showStatus("上传中…", "");
       setProgress(0, true);
+      $("cancelBtn").hidden = true;
+      $("cancelBtn").disabled = false;
+      $("cancelBtn").textContent = "取消任务";
 
       const form = new FormData();
       form.append("file", file);
@@ -306,6 +330,11 @@
       form.append("language", $("language").value);
       form.append("initial_prompt", $("initialPrompt").value);
       form.append("vad", $("vad").checked ? "true" : "false");
+      form.append("batch_size", $("batchSize").value);
+      form.append("beam_size", $("beamSize").value);
+      const antiRepeat = $("antiRepeat").checked;
+      form.append("condition_on_previous_text", antiRepeat ? "false" : "true");
+      form.append("no_repeat_ngram_size", antiRepeat ? "3" : "0");
 
       try {
         const response = await fetch("/api/jobs", { method: "POST", body: form });
@@ -339,6 +368,9 @@
           setError(job.error || "转写失败");
           return;
         }
+        if (job.status === "cancelled") {
+          return;
+        }
         state.timer = setTimeout(poll, 800);
       } catch (error) {
         setError(error.message || "任务查询失败");
@@ -347,7 +379,16 @@
     }
 
     function renderStatus(job) {
-      if (job.status === "queued") {
+      const active = ["queued", "loading", "running"].includes(job.status);
+      const cancelBtn = $("cancelBtn");
+      cancelBtn.hidden = !active;
+      cancelBtn.disabled = Boolean(job.cancel_requested);
+      cancelBtn.textContent = job.cancel_requested ? "取消中…" : "取消任务";
+
+      if (job.cancel_requested && active) {
+        showStatus("正在取消…", "当前步骤结束后停止");
+        setProgress(0, true);
+      } else if (job.status === "queued") {
         showStatus("排队中…", "");
         setProgress(0, true);
       } else if (job.status === "loading") {
@@ -363,6 +404,9 @@
       } else if (job.status === "done") {
         showStatus("完成", job.duration ? `时长 ${fmtTime(job.duration)}` : "");
         setProgress(100, false);
+      } else if (job.status === "cancelled") {
+        showStatus("已取消", "");
+        setProgress(0, false);
       } else if (job.status === "error") {
         showStatus("失败", "");
         setProgress(0, false);
@@ -380,6 +424,8 @@
       $("dlTxt").href = `/api/jobs/${job.id}/download?fmt=txt`;
       $("dlSrt").href = `/api/jobs/${job.id}/download?fmt=srt`;
       $("dlVtt").href = `/api/jobs/${job.id}/download?fmt=vtt`;
+      $("dlMd").href = `/api/jobs/${job.id}/download?fmt=md`;
+      $("dlDocx").href = `/api/jobs/${job.id}/download?fmt=docx`;
 
       const meta = [];
       if (job.language_detected) {
@@ -407,6 +453,27 @@
         setTimeout(() => { button.textContent = previous; }, 1200);
       } catch (error) {
         setError("复制失败，请手动选择文本");
+      }
+    }
+
+    async function cancelJob() {
+      if (!state.jobId) return;
+      const button = $("cancelBtn");
+      button.disabled = true;
+      button.textContent = "取消中…";
+      try {
+        const response = await fetch(`/api/jobs/${state.jobId}/cancel`, {
+          method: "POST",
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "取消失败");
+        }
+        setError("");
+      } catch (error) {
+        setError(error.message || "取消失败");
+        button.disabled = false;
+        button.textContent = "取消任务";
       }
     }
 
@@ -513,6 +580,7 @@
 
     $("recordBtn").addEventListener("click", toggleRecording);
     $("copyBtn").addEventListener("click", copyTranscript);
+    $("cancelBtn").addEventListener("click", cancelJob);
 
     installDropzone();
     loadHealth();

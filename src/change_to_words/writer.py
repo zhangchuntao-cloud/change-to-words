@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 
-def write_text(path: Path, text: str, *, overwrite: bool = False) -> bool:
-    """原子写入 UTF-8 文本。
+def _write_atomic(path: Path, payload: bytes, *, overwrite: bool = False) -> bool:
+    """原子写入字节。
 
     返回 False 表示目标已存在且 overwrite=False；写入失败时不会留下半截文件。
     """
@@ -20,8 +20,8 @@ def write_text(path: Path, text: str, *, overwrite: bool = False) -> bool:
     )
     tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
 
@@ -38,3 +38,19 @@ def write_text(path: Path, text: str, *, overwrite: bool = False) -> bool:
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def write_text(path: Path, text: str, *, overwrite: bool = False) -> bool:
+    """原子写入 UTF-8 文本。
+
+    返回 False 表示目标已存在且 overwrite=False；写入失败时不会留下半截文件。
+    """
+    return _write_atomic(path, text.encode("utf-8"), overwrite=overwrite)
+
+
+def write_bytes(path: Path, data: bytes, *, overwrite: bool = False) -> bool:
+    """原子写入二进制数据。
+
+    返回 False 表示目标已存在且 overwrite=False；写入失败时不会留下半截文件。
+    """
+    return _write_atomic(path, bytes(data), overwrite=overwrite)

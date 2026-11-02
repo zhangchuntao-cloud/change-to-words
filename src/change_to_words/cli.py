@@ -8,6 +8,7 @@ from typing import Callable, List, Optional, TextIO
 
 from . import __version__
 from .jobs import Job, JobError, collect_sources, plan_jobs
+from .markdown import segments_to_markdown
 from .subtitle import segments_to_srt, segments_to_vtt
 from .text import segments_to_text
 from .transcriber import (
@@ -16,7 +17,8 @@ from .transcriber import (
     Transcriber,
     create_transcriber,
 )
-from .writer import write_text
+from .word import segments_to_docx
+from .writer import write_bytes, write_text
 
 TranscriberFactory = Callable[..., Transcriber]
 
@@ -29,6 +31,11 @@ def build_transcriber(
     download_root: Optional[str],
     offline: bool,
     initial_prompt: Optional[str] = None,
+    batch_size: int = 0,
+    beam_size: int = 5,
+    cpu_threads: int = 0,
+    condition_on_previous_text: bool = True,
+    no_repeat_ngram_size: int = 0,
 ) -> Transcriber:
     return create_transcriber(
         model=model,
@@ -37,6 +44,11 @@ def build_transcriber(
         download_root=download_root,
         offline=offline,
         initial_prompt=initial_prompt,
+        batch_size=batch_size,
+        beam_size=beam_size,
+        cpu_threads=cpu_threads,
+        condition_on_previous_text=condition_on_previous_text,
+        no_repeat_ngram_size=no_repeat_ngram_size,
     )
 
 
@@ -76,9 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--format",
         dest="output_format",
-        choices=("txt", "srt", "vtt"),
+        choices=("txt", "srt", "vtt", "docx", "md"),
         default="txt",
-        help="输出格式，默认 txt；也可以选 srt 或 vtt 字幕",
+        help="输出格式，默认 txt；也可以选 srt、vtt、docx 或 md",
     )
     parser.add_argument(
         "-o",
@@ -102,6 +114,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-vad",
         action="store_true",
         help="关闭静音过滤（默认开启）",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=0,
+        help="批量推理大小，0 表示关闭；建议 4-16，需要开启静音过滤",
+    )
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=5,
+        help="解码束宽，默认 5；1 最快但准确率略低，越大越准也越慢",
+    )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=0,
+        help="CPU 线程数，0 表示自动（默认）",
+    )
+    parser.add_argument(
+        "--condition-on-previous-text",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="是否使用前一段文本作为上下文；长音频出现重复时用 --no-condition-on-previous-text 关闭",
+    )
+    parser.add_argument(
+        "--no-repeat-ngram-size",
+        type=int,
+        default=0,
+        help="禁止重复的 n-gram 大小，0 表示关闭；出现重复时可设为 3",
     )
     parser.add_argument(
         "--initial-prompt",
@@ -148,6 +190,25 @@ def run(
     err = sys.stderr
     extension = f".{args.output_format}"
 
+    if args.batch_size < 0 or args.batch_size == 1 or args.batch_size > 16:
+        print("错误: --batch-size 必须是 0（关闭）或 2-16", file=err)
+        return 2
+    if args.batch_size > 0 and args.no_vad:
+        print(
+            "错误: 批量推理需要开启静音过滤，不能同时使用 --no-vad",
+            file=err,
+        )
+        return 2
+    if args.beam_size < 1 or args.beam_size > 10:
+        print("错误: --beam-size 必须在 1-10 之间", file=err)
+        return 2
+    if args.cpu_threads < 0:
+        print("错误: --cpu-threads 不能为负数", file=err)
+        return 2
+    if args.no_repeat_ngram_size < 0:
+        print("错误: --no-repeat-ngram-size 不能为负数", file=err)
+        return 2
+
     try:
         if args.model_path is not None and not args.model_path.is_dir():
             raise JobError(f"本地模型目录不存在: {args.model_path}")
@@ -167,6 +228,8 @@ def run(
             print("错误: --hf-endpoint 必须是 http(s) URL", file=err)
             return 2
         os.environ["HF_ENDPOINT"] = endpoint.rstrip("/")
+        # 部分镜像不支持 Xet 传输，强制走普通 HTTP 下载。
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
         if not args.quiet:
             print(f"使用 Hugging Face 镜像: {os.environ['HF_ENDPOINT']}", file=err)
 
@@ -209,6 +272,11 @@ def run(
             ),
             offline=args.offline,
             initial_prompt=args.initial_prompt,
+            batch_size=args.batch_size,
+            beam_size=args.beam_size,
+            cpu_threads=args.cpu_threads,
+            condition_on_previous_text=args.condition_on_previous_text,
+            no_repeat_ngram_size=args.no_repeat_ngram_size,
         )
     except KeyboardInterrupt:
         print("\n已取消", file=err)
@@ -238,16 +306,27 @@ def run(
                 err.write("\r\033[K")
                 err.flush()
 
-            if args.output_format == "srt":
-                content = segments_to_srt(result.segments)
-            elif args.output_format == "vtt":
-                content = segments_to_vtt(result.segments)
-            else:
-                content = segments_to_text(
-                    segment.text for segment in result.segments
+            if args.output_format == "docx":
+                wrote = write_bytes(
+                    job.target,
+                    segments_to_docx(result.segments),
+                    overwrite=args.overwrite,
                 )
+            else:
+                if args.output_format == "srt":
+                    content = segments_to_srt(result.segments)
+                elif args.output_format == "vtt":
+                    content = segments_to_vtt(result.segments)
+                elif args.output_format == "md":
+                    content = segments_to_markdown(
+                        segment.text for segment in result.segments
+                    )
+                else:
+                    content = segments_to_text(
+                        segment.text for segment in result.segments
+                    )
 
-            wrote = write_text(job.target, content, overwrite=args.overwrite)
+                wrote = write_text(job.target, content, overwrite=args.overwrite)
 
             if not wrote:
                 skipped.append(job)

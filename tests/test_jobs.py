@@ -80,6 +80,34 @@ class PlanJobsTests(unittest.TestCase):
             jobs = plan_jobs([source], root / "out", ".vtt")
             self.assertEqual(jobs[0].target, root / "out" / "sub" / "a.vtt")
 
+    def test_output_extension_can_be_docx(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = Source(path=root / "a.mp3", relpath=Path("a.mp3"))
+            jobs = plan_jobs([source], None, ".docx")
+            self.assertEqual(jobs[0].target, root / "a.docx")
+
+    def test_output_docx_file_for_single_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = Source(path=root / "a.mp3", relpath=Path("a.mp3"))
+            jobs = plan_jobs([source], root / "result.docx", ".docx")
+            self.assertEqual(jobs[0].target, root / "result.docx")
+
+    def test_output_extension_can_be_md(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = Source(path=root / "a.mp3", relpath=Path("a.mp3"))
+            jobs = plan_jobs([source], None, ".md")
+            self.assertEqual(jobs[0].target, root / "a.md")
+
+    def test_output_md_file_for_single_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = Source(path=root / "a.mp3", relpath=Path("a.mp3"))
+            jobs = plan_jobs([source], root / "result.md", ".md")
+            self.assertEqual(jobs[0].target, root / "result.md")
+
     def test_output_txt_file_for_single_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -140,7 +168,7 @@ class PlanJobsTests(unittest.TestCase):
             root = Path(tmp)
             source = Source(path=root / "a.mp3", relpath=Path("a.mp3"))
             with self.assertRaises(ValueError):
-                plan_jobs([source], None, ".md")
+                plan_jobs([source], None, ".pdf")
 
 
 if __name__ == "__main__":
