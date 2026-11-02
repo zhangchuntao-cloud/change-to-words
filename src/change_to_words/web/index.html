@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>change-to-words</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --ink: #171717;
+      --muted: #737373;
+      --line: #e5e5e5;
+      --bg: #fafafa;
+      --card: #ffffff;
+      --accent: #2563eb;
+      --err: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell { max-width: 720px; margin: 0 auto; padding: 56px 20px 48px; }
+    header { margin-bottom: 28px; }
+    h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.03em; }
+    header p { margin: 7px 0 0; color: var(--muted); font-size: 13px; }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 24px;
+    }
+    .drop {
+      border: 1.5px dashed var(--line);
+      border-radius: 16px;
+      padding: 42px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .16s ease, background .16s ease;
+      outline: none;
+    }
+    .drop:hover, .drop:focus-visible, .drop.drag {
+      border-color: var(--accent);
+      background: #f8fbff;
+    }
+    .drop-icon {
+      width: 42px; height: 42px; margin: 0 auto 14px;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      color: var(--accent); background: #eff6ff;
+      font-size: 20px; font-weight: 700;
+    }
+    .drop h2 { margin: 0 0 5px; font-size: 16px; font-weight: 600; }
+    .drop p { margin: 0; color: var(--muted); font-size: 13px; }
+    .filename {
+      margin-top: 12px; font-size: 12px; color: var(--accent);
+      font-weight: 600; word-break: break-all; min-height: 18px;
+    }
+    .record-row { display: flex; justify-content: center; margin-top: 10px; }
+    .text-btn {
+      appearance: none; border: 0; background: none; color: var(--muted);
+      font: inherit; font-size: 13px; cursor: pointer; padding: 7px 10px;
+      border-radius: 8px;
+    }
+    .text-btn:hover { color: var(--accent); background: #f5f9ff; }
+    .text-btn.recording { color: var(--err); }
+    details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+    summary {
+      cursor: pointer; color: var(--muted); font-size: 12px;
+      list-style: none; width: fit-content; padding: 2px 0;
+      user-select: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: "＋ "; }
+    details[open] summary::before { content: "－ "; }
+    .advanced-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px;
+    }
+    .advanced-grid label {
+      display: flex; flex-direction: column; gap: 6px;
+      color: var(--muted); font-size: 12px;
+    }
+    .advanced-grid label.wide { grid-column: 1 / -1; }
+    .advanced-grid label.check {
+      flex-direction: row; align-items: center; gap: 8px;
+      color: var(--ink); font-size: 13px; padding-top: 22px;
+    }
+    select, input[type="text"] {
+      width: 100%; border: 1px solid var(--line); border-radius: 9px;
+      padding: 9px 10px; background: #fff; color: var(--ink);
+      font: inherit; font-size: 13px; outline: none;
+    }
+    select:focus, input[type="text"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .10);
+    }
+    .status { display: none; margin-top: 22px; }
+    .status.visible { display: block; }
+    .status-line {
+      display: flex; justify-content: space-between; gap: 12px;
+      color: var(--muted); font-size: 13px;
+    }
+    .status-line strong { color: var(--ink); font-weight: 600; }
+    .bar {
+      height: 4px; border-radius: 99px; background: #eeeeee;
+      margin-top: 10px; overflow: hidden;
+    }
+    .bar > div {
+      height: 100%; width: 0%; background: var(--accent);
+      border-radius: 99px; transition: width .3s ease;
+    }
+    .bar.indeterminate > div { width: 32%; animation: slide 1.2s ease-in-out infinite; }
+    @keyframes slide {
+      from { transform: translateX(-110%); }
+      to { transform: translateX(330%); }
+    }
+    .error { display: none; color: var(--err); font-size: 13px; margin-top: 10px; }
+    .error.visible { display: block; }
+    .result { display: none; margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
+    .result.visible { display: block; }
+    .result-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .result-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .actions a, .actions button {
+      appearance: none; font: inherit; font-size: 12px;
+      color: var(--muted); text-decoration: none; cursor: pointer;
+      background: #fff; border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 10px;
+    }
+    .actions a:hover, .actions button:hover {
+      color: var(--accent); border-color: var(--accent);
+    }
+    .transcript {
+      margin-top: 14px; white-space: pre-wrap; word-break: break-word;
+      font-size: 15px; line-height: 1.8; max-height: 420px; overflow: auto;
+    }
+    .meta { margin-top: 10px; color: var(--muted); font-size: 12px; }
+    footer { margin-top: 22px; text-align: center; color: var(--muted); font-size: 11px; }
+    @media (max-width: 560px) {
+      .shell { padding: 30px 14px 36px; }
+      .panel { padding: 18px; }
+      .drop { padding: 34px 14px; }
+      .advanced-grid { grid-template-columns: 1fr; }
+      .advanced-grid label.check { padding-top: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>change-to-words</h1>
+      <p>拖入音频或视频，自动转成文字。音频只在本机处理。</p>
+    </header>
+
+    <main class="panel">
+      <div id="dropzone" class="drop" role="button" tabindex="0" aria-label="选择音频或视频文件">
+        <input id="fileInput" type="file" accept="audio/*,video/*,.mkv,.flv,.ts" hidden>
+        <div class="drop-icon">↑</div>
+        <h2>拖入音频 / 视频</h2>
+        <p>或点击选择文件，自动开始转写</p>
+        <div id="fileName" class="filename"></div>
+      </div>
+
+      <div class="record-row">
+        <button id="recordBtn" class="text-btn" type="button">● 直接录音</button>
+      </div>
+
+      <details>
+        <summary>高级设置</summary>
+        <div class="advanced-grid">
+          <label>模型
+            <select id="model">
+              <option value="tiny">tiny · 最快</option>
+              <option value="base">base</option>
+              <option value="small" selected>small · 推荐</option>
+              <option value="medium">medium · 更准</option>
+              <option value="large-v3">large-v3 · 最准</option>
+            </select>
+          </label>
+          <label>语言
+            <select id="language">
+              <option value="auto">自动识别</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+              <option value="yue">粤语</option>
+            </select>
+          </label>
+          <label class="wide">术语提示（可选）
+            <input id="initialPrompt" type="text" placeholder="人名、专有名词、行业词汇">
+          </label>
+          <label class="check">
+            <input id="vad" type="checkbox" checked> 静音过滤
+          </label>
+        </div>
+      </details>
+
+      <div id="status" class="status">
+        <div class="status-line">
+          <strong id="statusText">准备中…</strong>
+          <span id="statusMeta"></span>
+        </div>
+        <div id="barWrap" class="bar"><div id="bar"></div></div>
+        <div id="errorText" class="error"></div>
+      </div>
+
+      <section id="result" class="result">
+        <div class="result-head">
+          <h2>转写结果</h2>
+          <div class="actions">
+            <button id="copyBtn" type="button">复制</button>
+            <a id="dlTxt" href="#">TXT</a>
+            <a id="dlSrt" href="#">SRT</a>
+            <a id="dlVtt" href="#">VTT</a>
+          </div>
+        </div>
+        <div id="transcript" class="transcript"></div>
+        <div id="resultMeta" class="meta"></div>
+      </section>
+    </main>
+
+    <footer>本地运行 · 不上传第三方 · 首次使用会下载模型</footer>
+  </div>
+
+  <script>
+    const state = {
+      jobId: null,
+      timer: null,
+      job: null,
+      recording: false,
+      recorder: null,
+      chunks: [],
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function esc(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function fmtTime(seconds) {
+      const total = Math.max(0, Math.floor(seconds || 0));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    function fmtSize(bytes) {
+      if (!bytes) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = bytes, index = 0;
+      while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+      }
+      return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function setError(message) {
+      const box = $("errorText");
+      box.textContent = message || "";
+      box.classList.toggle("visible", Boolean(message));
+    }
+
+    function showStatus(text, meta) {
+      $("status").classList.add("visible");
+      $("statusText").textContent = text;
+      $("statusMeta").textContent = meta || "";
+    }
+
+    function setProgress(percent, indeterminate) {
+      const wrap = $("barWrap");
+      wrap.classList.toggle("indeterminate", Boolean(indeterminate));
+      $("bar").style.width = indeterminate
+        ? ""
+        : `${Math.max(0, Math.min(100, percent || 0))}%`;
+    }
+
+    async function startJob(file) {
+      if (!file) return;
+      clearTimeout(state.timer);
+      state.job = null;
+      $("result").classList.remove("visible");
+      $("fileName").textContent = `${file.name} · ${fmtSize(file.size)}`;
+      setError("");
+      showStatus("上传中…", "");
+      setProgress(0, true);
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("model", $("model").value);
+      form.append("language", $("language").value);
+      form.append("initial_prompt", $("initialPrompt").value);
+      form.append("vad", $("vad").checked ? "true" : "false");
+
+      try {
+        const response = await fetch("/api/jobs", { method: "POST", body: form });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "上传失败");
+        state.jobId = data.id;
+        showStatus("排队中…", "");
+        poll();
+      } catch (error) {
+        setError(error.message || "上传失败");
+        showStatus("失败", "");
+        setProgress(0, false);
+      }
+    }
+
+    async function poll() {
+      clearTimeout(state.timer);
+      if (!state.jobId) return;
+      try {
+        const response = await fetch(`/api/jobs/${state.jobId}`);
+        const job = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(job.detail || "任务查询失败");
+        state.job = job;
+        renderStatus(job);
+
+        if (job.status === "done") {
+          renderResult(job);
+          return;
+        }
+        if (job.status === "error") {
+          setError(job.error || "转写失败");
+          return;
+        }
+        state.timer = setTimeout(poll, 800);
+      } catch (error) {
+        setError(error.message || "任务查询失败");
+        state.timer = setTimeout(poll, 2000);
+      }
+    }
+
+    function renderStatus(job) {
+      if (job.status === "queued") {
+        showStatus("排队中…", "");
+        setProgress(0, true);
+      } else if (job.status === "loading") {
+        showStatus("加载模型…", "首次使用需要下载模型");
+        setProgress(0, true);
+      } else if (job.status === "running") {
+        const percent = Math.max(0, Math.min(100, job.progress || 0));
+        const parts = [];
+        if (job.processed) parts.push(`已处理 ${fmtTime(job.processed)}`);
+        if (job.duration) parts.push(`总长 ${fmtTime(job.duration)}`);
+        showStatus(`转写中 ${percent.toFixed(0)}%`, parts.join(" · "));
+        setProgress(percent, false);
+      } else if (job.status === "done") {
+        showStatus("完成", job.duration ? `时长 ${fmtTime(job.duration)}` : "");
+        setProgress(100, false);
+      } else if (job.status === "error") {
+        showStatus("失败", "");
+        setProgress(0, false);
+      }
+    }
+
+    function renderResult(job) {
+      const segments = job.segments || [];
+      const text = segments
+        .map((segment) => (segment.text || "").trim())
+        .filter(Boolean)
+        .join("\n");
+
+      $("transcript").textContent = text || "（未识别到语音内容）";
+      $("dlTxt").href = `/api/jobs/${job.id}/download?fmt=txt`;
+      $("dlSrt").href = `/api/jobs/${job.id}/download?fmt=srt`;
+      $("dlVtt").href = `/api/jobs/${job.id}/download?fmt=vtt`;
+
+      const meta = [];
+      if (job.language_detected) {
+        const confidence = job.language_probability == null
+          ? ""
+          : ` ${Math.round(job.language_probability * 100)}%`;
+        meta.push(`语言 ${job.language_detected}${confidence}`);
+      }
+      if (job.segment_count) meta.push(`${job.segment_count} 段`);
+      if (job.duration) meta.push(`时长 ${fmtTime(job.duration)}`);
+      $("resultMeta").textContent = meta.join(" · ");
+
+      $("result").classList.add("visible");
+      $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    async function copyTranscript() {
+      const text = $("transcript").textContent;
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        const button = $("copyBtn");
+        const previous = button.textContent;
+        button.textContent = "已复制";
+        setTimeout(() => { button.textContent = previous; }, 1200);
+      } catch (error) {
+        setError("复制失败，请手动选择文本");
+      }
+    }
+
+    function installDropzone() {
+      const dropzone = $("dropzone");
+      const input = $("fileInput");
+
+      function openPicker() {
+        input.click();
+      }
+
+      dropzone.addEventListener("click", openPicker);
+      dropzone.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openPicker();
+        }
+      });
+      input.addEventListener("change", () => {
+        startJob(input.files[0]);
+        input.value = "";
+      });
+
+      ["dragenter", "dragover"].forEach((type) => {
+        dropzone.addEventListener(type, (event) => {
+          event.preventDefault();
+          dropzone.classList.add("drag");
+        });
+      });
+      ["dragleave", "drop"].forEach((type) => {
+        dropzone.addEventListener(type, (event) => {
+          event.preventDefault();
+          dropzone.classList.remove("drag");
+        });
+      });
+      dropzone.addEventListener("drop", (event) => {
+        startJob(event.dataTransfer.files[0]);
+      });
+    }
+
+    async function toggleRecording() {
+      const button = $("recordBtn");
+      if (state.recording) {
+        state.recording = false;
+        button.classList.remove("recording");
+        button.textContent = "● 直接录音";
+        if (state.recorder && state.recorder.state !== "inactive") {
+          state.recorder.stop();
+        }
+        return;
+      }
+
+      if (!navigator.mediaDevices || !window.MediaRecorder) {
+        setError("当前浏览器不支持录音，请直接上传文件");
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        state.chunks = [];
+        const recorder = new MediaRecorder(stream);
+        state.recorder = recorder;
+
+        recorder.addEventListener("dataavailable", (event) => {
+          if (event.data && event.data.size > 0) state.chunks.push(event.data);
+        });
+        recorder.addEventListener("stop", () => {
+          const type = recorder.mimeType || "audio/webm";
+          const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+          const blob = new Blob(state.chunks, { type });
+          const name = `录音-${new Date().toISOString().slice(11, 19).replaceAll(":", "-")}.${extension}`;
+          stream.getTracks().forEach((track) => track.stop());
+          startJob(new File([blob], name, { type }));
+        });
+
+        recorder.start();
+        state.recording = true;
+        button.classList.add("recording");
+        button.textContent = "■ 停止并转写";
+      } catch (error) {
+        setError("无法访问麦克风: " + (error.message || error));
+      }
+    }
+
+    async function loadHealth() {
+      try {
+        const response = await fetch("/api/health");
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.default_model) {
+          const select = $("model");
+          if (!Array.from(select.options).some((option) => option.value === data.default_model)) {
+            const option = document.createElement("option");
+            option.value = data.default_model;
+            option.textContent = data.default_model;
+            select.appendChild(option);
+          }
+          select.value = data.default_model;
+        }
+      } catch (error) {
+        // 服务异常时保留默认值，上传时再显示错误
+      }
+    }
+
+    $("recordBtn").addEventListener("click", toggleRecording);
+    $("copyBtn").addEventListener("click", copyTranscript);
+
+    installDropzone();
+    loadHealth();
+  </script>
+</body>
+</html>

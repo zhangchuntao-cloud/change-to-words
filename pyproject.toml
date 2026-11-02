@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "change-to-words"
+version = "0.3.1"
+description = "本地离线音频/视频转文字 CLI 与极简 Web 界面（基于 faster-whisper）"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "faster-whisper>=1.0,<1.2",
+    "fastapi>=0.110,<1",
+    "uvicorn>=0.29,<1",
+    "python-multipart>=0.0.9,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7,<9",
+]
+
+[project.scripts]
+change-to-words = "change_to_words.cli:main"
+ctw = "change_to_words.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/change_to_words"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+markers = [
+    "integration: 需要真实模型或真实音频的测试（默认跳过）",
+]

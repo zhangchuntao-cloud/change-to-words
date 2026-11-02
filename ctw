@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPS="$ROOT/.deps"
+
+if [ ! -d "$DEPS/faster_whisper" ]; then
+  echo "错误: 本地依赖不存在: $DEPS" >&2
+  echo "请先执行: ./setup_local.sh" >&2
+  exit 1
+fi
+
+# 默认使用 PATH 中的 python3；可用 CTW_PYTHON 指定其他解释器。
+PYTHON_BIN="${CTW_PYTHON:-python3}"
+
+export PYTHONPATH="$ROOT/src:$DEPS${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON_BIN" -m change_to_words "$@"
